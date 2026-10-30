@@ -87,12 +87,16 @@ async function start(session){
   app.innerHTML = '<header><div><b>ASC Le Ndiolofène</b><small>Administration · ' + esc(state.profile.role === 'admin' ? 'administrateur' : 'éditeur') + '</small></div><button class="alt" id="lo">Déconnexion</button></header>' +
     '<main><div id="msg" role="status"></div><div class="card"><h2>Actualités</h2><div class="row" style="margin-top:0"><button id="nw">Nouvelle actualité</button></div></div>' +
     '<div id="form"></div><div class="card" id="list"></div>' +
+    '<div class="card"><h2>Matchs</h2><div class="row" style="margin-top:0"><button id="nm">Nouveau match</button></div></div><div id="mform"></div><div class="card" id="matchlist"></div>' +
     '<div class="card"><h2>Messages reçus</h2><div id="mlist"></div></div></main>';
   document.getElementById('lo').onclick = logout;
   document.getElementById('nw').onclick = function(){ openForm(null); };
   document.getElementById('list').addEventListener('click', onListClick);
   document.getElementById('mlist').addEventListener('click', onMsgClick);
+  document.getElementById('nm').onclick = function(){ openMatchForm(null); };
+  document.getElementById('matchlist').addEventListener('click', onMatchClick);
   loadNews();
+  loadMatches();
   loadMessages();
 }
 async function logout(){ await sb.auth.signOut(); showLogin(); }
@@ -178,6 +182,94 @@ async function removeItem(n){
   var r = await sb.from('news').delete().eq('id', n.id);
   if(r.error){ toast('Suppression impossible : ' + r.error.message, true); return; }
   toast('Actualité supprimée.'); loadNews();
+}
+
+// ---------- Matchs ----------
+var MATCHES = [], mEditing = null;
+var COMPS = ['CNP – Zone 5', 'Phase départementale (ODCAV)', 'Phase régionale (ORCAV)', 'Phase nationale (ONCAV)', 'Coupe du maire', 'Match amical'];
+function matchLine(m){
+  var a = 'ASC Le Ndiolofène', o = esc(m.opponent), has = m.score_for != null && m.score_against != null;
+  if(m.is_home) return has ? a + ' ' + m.score_for + ' – ' + m.score_against + ' ' + o : a + ' vs ' + o;
+  return has ? o + ' ' + m.score_against + ' – ' + m.score_for + ' ' + a : o + ' vs ' + a;
+}
+function toLocalInput(iso){ var d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); }
+async function loadMatches(){
+  var r = await sb.from('matches').select('id,competition,opponent,played_at,venue,is_home,score_for,score_against,report,published').order('played_at', { ascending:false });
+  if(r.error){ document.getElementById('matchlist').innerHTML = '<div class="empty">Impossible de charger les matchs : ' + esc(r.error.message) + '</div>'; return; }
+  MATCHES = r.data; renderMatches();
+}
+function renderMatches(){
+  var el = document.getElementById('matchlist');
+  if(!MATCHES.length){ el.innerHTML = '<div class="empty">Aucun match enregistré. Touchez « Nouveau match » pour ajouter le premier.</div>'; return; }
+  el.innerHTML = MATCHES.map(function(m){
+    var d = new Date(m.played_at).toLocaleString('fr-FR', { dateStyle:'full', timeStyle:'short' });
+    return '<div class="item"><h3>' + matchLine(m) + '</h3><span class="tag' + (m.published ? ' pub' : '') + '">' + (m.published ? 'Publié' : 'Masqué') + '</span><span class="tag">' + esc(m.competition) + '</span><span class="tag">' + (m.is_home ? 'Domicile' : 'Extérieur') + '</span>' +
+      '<p class="muted" style="margin:.4rem 0 0">' + esc(d) + (m.venue ? ' · ' + esc(m.venue) : '') + '</p>' +
+      '<div class="row" style="margin-top:.6rem"><button class="alt" data-act="medit" data-id="' + m.id + '">Modifier / saisir le score</button>' +
+      '<button class="alt" data-act="mtoggle" data-id="' + m.id + '">' + (m.published ? 'Masquer' : 'Publier') + '</button>' +
+      '<button class="danger" data-act="mdel" data-id="' + m.id + '">Supprimer</button></div></div>';
+  }).join('');
+}
+function openMatchForm(m){
+  mEditing = m;
+  var known = m && COMPS.indexOf(m.competition) >= 0;
+  var opts = COMPS.map(function(c){ return '<option value="' + esc(c) + '"' + (m && m.competition === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') +
+    '<option value="__autre"' + (m && !known ? ' selected' : '') + '>Autre (à préciser)</option>';
+  var f = document.getElementById('mform');
+  f.innerHTML = '<div class="card"><h2>' + (m ? 'Modifier le match' : 'Nouveau match') + '</h2><form id="mf">' +
+    '<label for="mcomp">Compétition</label><select id="mcomp">' + opts + '</select>' +
+    '<div id="mother" style="display:' + (m && !known ? 'block' : 'none') + '"><label for="mcompo">Nom de la compétition</label><input id="mcompo" maxlength="120" value="' + esc(m && !known ? m.competition : '') + '"></div>' +
+    '<label for="mopp">Adversaire</label><input id="mopp" maxlength="120" required value="' + esc(m ? m.opponent : '') + '">' +
+    '<label for="mdate">Date et heure</label><input id="mdate" type="datetime-local" required value="' + (m ? toLocalInput(m.played_at) : '') + '">' +
+    '<label for="mvenue">Lieu (stade, terrain)</label><input id="mvenue" maxlength="150" value="' + esc(m && m.venue ? m.venue : '') + '">' +
+    '<label for="mhome">Le match se joue</label><select id="mhome"><option value="1"' + (!m || m.is_home ? ' selected' : '') + '>À domicile</option><option value="0"' + (m && !m.is_home ? ' selected' : '') + '>À l’extérieur</option></select>' +
+    '<label for="msf">Buts de l’ASC Le Ndiolofène (après le match)</label><input id="msf" type="number" min="0" max="99" inputmode="numeric" value="' + (m && m.score_for != null ? m.score_for : '') + '">' +
+    '<label for="msa">Buts de l’adversaire (après le match)</label><input id="msa" type="number" min="0" max="99" inputmode="numeric" value="' + (m && m.score_against != null ? m.score_against : '') + '">' +
+    '<label for="mreport">Compte rendu (facultatif)</label><textarea id="mreport" rows="5">' + esc(m && m.report ? m.report : '') + '</textarea>' +
+    '<label><input type="checkbox" id="mpub"' + (!m || m.published ? ' checked' : '') + '>Afficher sur le site</label>' +
+    '<div class="row"><button type="submit" id="msv">Enregistrer</button><button type="button" class="alt" id="mcn">Annuler</button></div></form></div>';
+  document.getElementById('mcomp').onchange = function(){ document.getElementById('mother').style.display = this.value === '__autre' ? 'block' : 'none'; };
+  document.getElementById('mcn').onclick = function(){ f.innerHTML = ''; mEditing = null; };
+  document.getElementById('mf').addEventListener('submit', saveMatch);
+  f.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+async function saveMatch(e){
+  e.preventDefault();
+  var btn = document.getElementById('msv');
+  var comp = document.getElementById('mcomp').value;
+  if(comp === '__autre') comp = document.getElementById('mcompo').value.trim();
+  var opp = document.getElementById('mopp').value.trim(), dv = document.getElementById('mdate').value;
+  var sf = document.getElementById('msf').value.trim(), sa = document.getElementById('msa').value.trim();
+  if(!comp){ toast('Indiquez le nom de la compétition.', true); return; }
+  if(opp.length < 2){ toast('Indiquez le nom de l’adversaire.', true); return; }
+  if(!dv){ toast('Indiquez la date et l’heure du match.', true); return; }
+  if((sf === '') !== (sa === '')){ toast('Saisissez les deux scores, ou aucun des deux.', true); return; }
+  if(sf !== '' && (!/^\d{1,2}$/.test(sf) || !/^\d{1,2}$/.test(sa))){ toast('Les scores doivent être des nombres entiers.', true); return; }
+  btn.disabled = true;
+  var payload = { competition: comp, opponent: opp, played_at: new Date(dv).toISOString(), venue: document.getElementById('mvenue').value.trim() || null,
+    is_home: document.getElementById('mhome').value === '1', score_for: sf === '' ? null : parseInt(sf, 10), score_against: sa === '' ? null : parseInt(sa, 10),
+    report: document.getElementById('mreport').value.trim() || null, published: document.getElementById('mpub').checked };
+  var r = mEditing ? await sb.from('matches').update(payload).eq('id', mEditing.id) : await sb.from('matches').insert(payload);
+  btn.disabled = false;
+  if(r.error){ toast('Enregistrement impossible : ' + r.error.message, true); return; }
+  document.getElementById('mform').innerHTML = ''; mEditing = null;
+  toast('Match enregistré.'); loadMatches();
+}
+async function onMatchClick(e){
+  var b = e.target.closest('button[data-act]'); if(!b) return;
+  var m = MATCHES.find(function(x){ return x.id === b.dataset.id; }); if(!m) return;
+  if(b.dataset.act === 'medit') openMatchForm(m);
+  if(b.dataset.act === 'mtoggle'){
+    var r = await sb.from('matches').update({ published: !m.published }).eq('id', m.id);
+    if(r.error){ toast('Action impossible : ' + r.error.message, true); return; }
+    toast(m.published ? 'Match masqué.' : 'Match publié.'); loadMatches();
+  }
+  if(b.dataset.act === 'mdel'){
+    if(!window.confirm('Supprimer ce match contre ' + m.opponent + ' ? Cette action est définitive.')) return;
+    var d = await sb.from('matches').delete().eq('id', m.id);
+    if(d.error){ toast('Suppression impossible : ' + d.error.message, true); return; }
+    toast('Match supprimé.'); loadMatches();
+  }
 }
 
 // ---------- Messages reçus ----------
