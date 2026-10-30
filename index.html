@@ -88,6 +88,10 @@ async function start(session){
     '<main><div id="msg" role="status"></div><div class="card"><h2>Actualités</h2><div class="row" style="margin-top:0"><button id="nw">Nouvelle actualité</button></div></div>' +
     '<div id="form"></div><div class="card" id="list"></div>' +
     '<div class="card"><h2>Matchs</h2><div class="row" style="margin-top:0"><button id="nm">Nouveau match</button></div></div><div id="mform"></div><div class="card" id="matchlist"></div>' +
+    '<div class="card"><h2>Textes du site</h2><form id="stf">' +
+    '<label for="sthist">Historique de l’ASC (affiché dans « L’association »)</label><textarea id="sthist" rows="8" maxlength="8000"></textarea>' +
+    '<label for="stcult">Présentation du volet culturel et théâtre</label><textarea id="stcult" rows="4" maxlength="2000"></textarea>' +
+    '<div class="row"><button type="submit" id="stsv">Enregistrer les textes</button></div></form></div>' +
     '<div class="card"><h2>Messages reçus</h2><div id="mlist"></div></div></main>';
   document.getElementById('lo').onclick = logout;
   document.getElementById('nw').onclick = function(){ openForm(null); };
@@ -96,7 +100,9 @@ async function start(session){
   document.getElementById('nm').onclick = function(){ openMatchForm(null); };
   document.getElementById('matchlist').addEventListener('click', onMatchClick);
   loadNews();
+  document.getElementById('stf').addEventListener('submit', saveSettings);
   loadMatches();
+  loadSettings();
   loadMessages();
 }
 async function logout(){ await sb.auth.signOut(); showLogin(); }
@@ -270,6 +276,27 @@ async function onMatchClick(e){
     if(d.error){ toast('Suppression impossible : ' + d.error.message, true); return; }
     toast('Match supprimé.'); loadMatches();
   }
+}
+
+// ---------- Textes du site ----------
+async function loadSettings(){
+  var r = await sb.from('site_settings').select('key,value').in('key', ['historique','culture_intro']);
+  if(r.error){ toast('Impossible de charger les textes : ' + r.error.message, true); return; }
+  r.data.forEach(function(s){
+    if(s.key === 'historique') document.getElementById('sthist').value = s.value;
+    if(s.key === 'culture_intro') document.getElementById('stcult').value = s.value;
+  });
+}
+async function saveSettings(e){
+  e.preventDefault();
+  var btn = document.getElementById('stsv'); btn.disabled = true;
+  var r = await sb.from('site_settings').upsert([
+    { key:'historique', value: document.getElementById('sthist').value.trim() },
+    { key:'culture_intro', value: document.getElementById('stcult').value.trim() }
+  ], { onConflict:'key' });
+  btn.disabled = false;
+  if(r.error){ toast('Enregistrement impossible : ' + r.error.message, true); return; }
+  toast('Textes enregistrés.');
 }
 
 // ---------- Messages reçus ----------
