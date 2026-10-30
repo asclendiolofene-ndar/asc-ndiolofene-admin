@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Administration – ASC Le Ndiolofène</title>
+<style>
+:root{--g:#17803a;--d:#0d4a22;--l:#7cc65a;--bg:#f3f8f1;--ink:#10231a;--m:#4b6455;--line:#cfe0cb;--red:#b3261e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{background:var(--d);color:#fff;padding:.7rem 1rem;display:flex;justify-content:space-between;align-items:center;gap:.8rem}
+header b{font-size:1.05rem}
+header small{display:block;color:#bfe2b3}
+main{max-width:760px;margin:auto;padding:1rem}
+h1,h2{margin:.2rem 0 .8rem}
+.card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:1rem;margin-bottom:1rem}
+label{display:block;font-weight:600;margin:.8rem 0 .25rem}
+input,select,textarea{width:100%;font:inherit;padding:.65rem;border:1px solid var(--m);border-radius:6px;background:#fff;color:var(--ink)}
+input[type=checkbox]{width:auto;margin-right:.5rem}
+.row{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}
+button{font:inherit;font-weight:600;border:0;border-radius:999px;padding:.6rem 1.1rem;background:var(--g);color:#fff;cursor:pointer}
+button.alt{background:#e2eedf;color:var(--d)}
+button.danger{background:#fbe4e2;color:var(--red)}
+button:disabled{opacity:.6;cursor:wait}
+:focus-visible{outline:3px solid var(--l);outline-offset:2px}
+.item{border-top:1px solid var(--line);padding:.8rem 0}
+.item:first-child{border-top:0}
+.item h3{margin:0 0 .2rem;font-size:1.05rem}
+.tag{display:inline-block;font-size:.8rem;font-weight:600;border-radius:4px;padding:.05rem .45rem;margin-right:.4rem;background:#e2eedf;color:var(--d)}
+.tag.pub{background:var(--l);color:#0b2a14}
+.muted{color:var(--m)}
+#msg{position:sticky;top:0;z-index:5;margin:0 0 1rem;padding:.7rem 1rem;border-radius:6px;font-weight:600;display:none}
+#msg.ok{display:block;background:#dff3d8;color:var(--d)}
+#msg.err{display:block;background:#fbe4e2;color:var(--red)}
+.empty{border:2px dashed var(--line);border-radius:8px;padding:1.2rem;color:var(--m)}
+img.cover{max-width:100%;max-height:140px;border-radius:6px;margin-top:.5rem}
+</style>
+</head>
+<body>
+<div id="app"><main><p>Chargement…</p></main></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// Informations publiques du projet (la sécurité est assurée par les règles de la base).
+var SUPABASE_URL = 'https://rwhkvhkkrqblncmltcqa.supabase.co';
+var SUPABASE_KEY = 'sb_publishable_oIQTsNRlg9SwnwLIbPiHAA_WO6fmel3';
+var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+var app = document.getElementById('app');
+var state = { session: null, profile: null, items: [], editing: null, formOpen: false };
+var CATS = { actualite:'Actualité', communique:'Communiqué', match:'Match', culture:'Culture', social:'Social', interview:'Interview' };
+var TYPES = { 'image/jpeg':'jpg', 'image/png':'png', 'image/webp':'webp' };
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function slugify(s){ return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60) || 'actualite'; }
+function toast(text, isErr){ var m = document.getElementById('msg'); if(!m) return; m.textContent = text; m.className = isErr ? 'err' : 'ok'; m.scrollIntoView({block:'nearest'}); if(!isErr) setTimeout(function(){ m.className=''; }, 3500); }
+
+// ---------- Connexion ----------
+function showLogin(){
+  app.innerHTML = '<main><div class="card"><h1>Administration</h1><p class="muted">ASC Le Ndiolofène. Réservé à l’équipe.</p>' +
+    '<form id="lf"><label for="em">Adresse e-mail</label><input id="em" type="email" autocomplete="username" required>' +
+    '<label for="pw">Mot de passe</label><input id="pw" type="password" autocomplete="current-password" required>' +
+    '<div class="row"><button type="submit" id="lb">Se connecter</button></div></form><p id="le" class="muted" role="alert"></p></div></main>';
+  document.getElementById('lf').addEventListener('submit', async function(e){
+    e.preventDefault();
+    var b = document.getElementById('lb'), er = document.getElementById('le');
+    b.disabled = true; er.textContent = '';
+    var r = await sb.auth.signInWithPassword({ email: document.getElementById('em').value.trim(), password: document.getElementById('pw').value });
+    b.disabled = false;
+    if(r.error){
+      var bad = r.error.status === 400 || r.error.status === 401 || r.error.status === 422;
+      er.textContent = bad ? 'E-mail ou mot de passe incorrect.' : 'Connexion au serveur impossible. Vérifiez votre réseau, puis réessayez. (' + r.error.message + ')';
+      return;
+    }
+    start(r.data.session);
+  });
+}
+
+// ---------- Tableau de bord ----------
+async function start(session){
+  state.session = session;
+  var r = await sb.from('profiles').select('full_name,role').eq('id', session.user.id).single();
+  state.profile = r.data;
+  if(r.error || !r.data || (r.data.role !== 'admin' && r.data.role !== 'editor')){
+    app.innerHTML = '<main><div class="card"><h1>Accès refusé</h1><p>Ce compte n’a pas les droits d’administration. Demandez à un administrateur de vous attribuer le rôle éditeur.</p><div class="row"><button id="lo">Se déconnecter</button></div></div></main>';
+    document.getElementById('lo').onclick = logout; return;
+  }
+  app.innerHTML = '<header><div><b>ASC Le Ndiolofène</b><small>Administration · ' + esc(state.profile.role === 'admin' ? 'administrateur' : 'éditeur') + '</small></div><button class="alt" id="lo">Déconnexion</button></header>' +
+    '<main><div id="msg" role="status"></div><div class="card"><h2>Actualités</h2><div class="row" style="margin-top:0"><button id="nw">Nouvelle actualité</button></div></div>' +
+    '<div id="form"></div><div class="card" id="list"></div>' +
+    '<div class="card"><h2>Messages reçus</h2><div id="mlist"></div></div></main>';
+  document.getElementById('lo').onclick = logout;
+  document.getElementById('nw').onclick = function(){ openForm(null); };
+  document.getElementById('list').addEventListener('click', onListClick);
+  document.getElementById('mlist').addEventListener('click', onMsgClick);
+  loadNews();
+  loadMessages();
+}
+async function logout(){ await sb.auth.signOut(); showLogin(); }
+
+async function loadNews(){
+  var r = await sb.from('news').select('id,title,category,excerpt,body,cover_url,published,published_at').order('created_at', { ascending:false });
+  if(r.error){ toast('Impossible de charger les actualités : ' + r.error.message, true); return; }
+  state.items = r.data; renderList();
+}
+function renderList(){
+  var el = document.getElementById('list');
+  if(!state.items.length){ el.innerHTML = '<div class="empty">Aucune actualité pour le moment. Touchez « Nouvelle actualité » pour écrire la première.</div>'; return; }
+  el.innerHTML = state.items.map(function(n){
+    return '<div class="item"><h3>' + esc(n.title) + '</h3><span class="tag' + (n.published ? ' pub' : '') + '">' + (n.published ? 'Publié' : 'Brouillon') + '</span><span class="tag">' + esc(CATS[n.category] || n.category) + '</span>' +
+      (n.excerpt ? '<p class="muted" style="margin:.4rem 0 0">' + esc(n.excerpt) + '</p>' : '') +
+      '<div class="row" style="margin-top:.6rem"><button class="alt" data-act="edit" data-id="' + n.id + '">Modifier</button>' +
+      '<button class="alt" data-act="toggle" data-id="' + n.id + '">' + (n.published ? 'Dépublier' : 'Publier') + '</button>' +
+      '<button class="danger" data-act="del" data-id="' + n.id + '">Supprimer</button></div></div>';
+  }).join('');
+}
+function onListClick(e){
+  var b = e.target.closest('button[data-act]'); if(!b) return;
+  var item = state.items.find(function(x){ return x.id === b.dataset.id; });
+  if(!item) return;
+  if(b.dataset.act === 'edit') openForm(item);
+  if(b.dataset.act === 'toggle') togglePublish(item);
+  if(b.dataset.act === 'del') removeItem(item);
+}
+
+// ---------- Formulaire ----------
+function openForm(item){
+  state.editing = item;
+  var o = Object.keys(CATS).map(function(k){ return '<option value="' + k + '"' + (item && item.category === k ? ' selected' : '') + '>' + CATS[k] + '</option>'; }).join('');
+  var f = document.getElementById('form');
+  f.innerHTML = '<div class="card"><h2>' + (item ? 'Modifier l’actualité' : 'Nouvelle actualité') + '</h2><form id="nf">' +
+    '<label for="ntitle">Titre</label><input id="ntitle" maxlength="200" required value="' + esc(item ? item.title : '') + '">' +
+    '<label for="ncat">Catégorie</label><select id="ncat">' + o + '</select>' +
+    '<label for="nexcerpt">Résumé (400 caractères maximum)</label><input id="nexcerpt" maxlength="400" value="' + esc(item ? item.excerpt : '') + '">' +
+    '<label for="nbody">Texte</label><textarea id="nbody" rows="8" required>' + esc(item ? item.body : '') + '</textarea>' +
+    '<label for="nfile">Photo de couverture (JPEG, PNG ou WebP, 10 Mo maximum)</label><input id="nfile" type="file" accept="image/jpeg,image/png,image/webp">' +
+    (item && item.cover_url ? '<img class="cover" alt="Couverture actuelle" src="' + esc(item.cover_url) + '">' : '') +
+    '<label><input type="checkbox" id="npub"' + (item && item.published ? ' checked' : '') + '>Publier sur le site</label>' +
+    '<div class="row"><button type="submit" id="sv">Enregistrer</button><button type="button" class="alt" id="cn">Annuler</button></div></form></div>';
+  document.getElementById('cn').onclick = function(){ f.innerHTML = ''; state.editing = null; };
+  document.getElementById('nf').addEventListener('submit', save);
+  f.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+async function save(e){
+  e.preventDefault();
+  var btn = document.getElementById('sv');
+  var title = document.getElementById('ntitle').value.trim(), body = document.getElementById('nbody').value.trim();
+  if(title.length < 3){ toast('Le titre doit contenir au moins 3 caractères.', true); return; }
+  if(!body){ toast('Écrivez le texte de l’actualité.', true); return; }
+  btn.disabled = true;
+  var payload = { title: title, category: document.getElementById('ncat').value, excerpt: document.getElementById('nexcerpt').value.trim() || null, body: body, published: document.getElementById('npub').checked };
+  var file = document.getElementById('nfile').files[0];
+  if(file){
+    if(!TYPES[file.type]){ toast('Format d’image non accepté. Utilisez JPEG, PNG ou WebP.', true); btn.disabled = false; return; }
+    if(file.size > 10485760){ toast('L’image dépasse 10 Mo.', true); btn.disabled = false; return; }
+    var path = 'news/' + Date.now() + '-' + slugify(file.name.replace(/\.[^.]+$/, '')) + '.' + TYPES[file.type];
+    var up = await sb.storage.from('media').upload(path, file, { contentType: file.type });
+    if(up.error){ toast('Échec de l’envoi de l’image : ' + up.error.message, true); btn.disabled = false; return; }
+    payload.cover_url = sb.storage.from('media').getPublicUrl(path).data.publicUrl;
+  }
+  if(payload.published && !(state.editing && state.editing.published_at)) payload.published_at = new Date().toISOString();
+  var r;
+  if(state.editing) r = await sb.from('news').update(payload).eq('id', state.editing.id);
+  else { payload.slug = slugify(title) + '-' + Date.now().toString(36); payload.author_id = state.session.user.id; r = await sb.from('news').insert(payload); }
+  btn.disabled = false;
+  if(r.error){ toast('Enregistrement impossible : ' + r.error.message, true); return; }
+  document.getElementById('form').innerHTML = ''; state.editing = null;
+  toast('Actualité enregistrée.'); loadNews();
+}
+async function togglePublish(n){
+  var p = { published: !n.published };
+  if(p.published && !n.published_at) p.published_at = new Date().toISOString();
+  var r = await sb.from('news').update(p).eq('id', n.id);
+  if(r.error){ toast('Action impossible : ' + r.error.message, true); return; }
+  toast(p.published ? 'Actualité publiée.' : 'Actualité dépubliée.'); loadNews();
+}
+async function removeItem(n){
+  if(!window.confirm('Supprimer « ' + n.title + ' » ? Cette action est définitive.')) return;
+  var r = await sb.from('news').delete().eq('id', n.id);
+  if(r.error){ toast('Suppression impossible : ' + r.error.message, true); return; }
+  toast('Actualité supprimée.'); loadNews();
+}
+
+// ---------- Messages reçus ----------
+var MSGS = [];
+async function loadMessages(){
+  var r = await sb.from('messages').select('id,kind,name,email,phone,body,handled,created_at').order('created_at', { ascending:false }).limit(50);
+  if(r.error){ document.getElementById('mlist').innerHTML = '<div class="empty">Impossible de charger les messages : ' + esc(r.error.message) + '</div>'; return; }
+  MSGS = r.data; renderMessages();
+}
+function renderMessages(){
+  var el = document.getElementById('mlist');
+  if(!MSGS.length){ el.innerHTML = '<div class="empty">Aucun message reçu pour le moment.</div>'; return; }
+  var isAdmin = state.profile && state.profile.role === 'admin';
+  el.innerHTML = MSGS.map(function(m){
+    var d = new Date(m.created_at).toLocaleString('fr-FR', { dateStyle:'long', timeStyle:'short' });
+    var mail = (m.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m.email)) ? ' · <a href="mailto:' + esc(m.email) + '">' + esc(m.email) + '</a>' : '';
+    return '<div class="item"><h3>' + esc(m.name) + '</h3><span class="tag' + (m.handled ? '' : ' pub') + '">' + (m.handled ? 'Traité' : 'Nouveau') + '</span><span class="muted">' + esc(d) + mail + '</span>' +
+      '<p style="white-space:pre-line;margin:.5rem 0 0">' + esc(m.body) + '</p>' +
+      '<div class="row" style="margin-top:.6rem"><button class="alt" data-act="handled" data-id="' + m.id + '">' + (m.handled ? 'Marquer comme nouveau' : 'Marquer comme traité') + '</button>' +
+      (isAdmin ? '<button class="danger" data-act="delmsg" data-id="' + m.id + '">Supprimer</button>' : '') + '</div></div>';
+  }).join('');
+}
+async function onMsgClick(e){
+  var b = e.target.closest('button[data-act]'); if(!b) return;
+  var m = MSGS.find(function(x){ return x.id === b.dataset.id; }); if(!m) return;
+  if(b.dataset.act === 'handled'){
+    var r = await sb.from('messages').update({ handled: !m.handled }).eq('id', m.id);
+    if(r.error){ toast('Action impossible : ' + r.error.message, true); return; }
+    loadMessages();
+  }
+  if(b.dataset.act === 'delmsg'){
+    if(!window.confirm('Supprimer ce message de ' + m.name + ' ? Cette action est définitive.')) return;
+    var d = await sb.from('messages').delete().eq('id', m.id);
+    if(d.error){ toast('Suppression impossible : ' + d.error.message, true); return; }
+    toast('Message supprimé.'); loadMessages();
+  }
+}
+
+// ---------- Démarrage ----------
+sb.auth.getSession().then(function(r){ if(r.data.session) start(r.data.session); else showLogin(); });
+</script>
+</body>
+</html>
