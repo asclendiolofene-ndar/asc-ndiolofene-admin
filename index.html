@@ -90,6 +90,8 @@ async function start(session){
     '<div class="card"><h2>Matchs</h2><div class="row" style="margin-top:0"><button id="nm">Nouveau match</button></div></div><div id="mform"></div><div class="card" id="matchlist"></div>' +
     '<div class="card"><h2>Joueurs et encadrement</h2><div class="row" style="margin-top:0"><button id="np">Nouveau joueur</button></div></div><div id="pform"></div><div class="card" id="pllist"></div>' +
     '<div class="card"><h2>Partenaires et sponsors</h2><div class="row" style="margin-top:0"><button id="npt">Nouveau partenaire</button></div></div><div id="ptform"></div><div class="card" id="ptlist"></div>' +
+    '<div class="card"><h2>Palmarès</h2><div class="row" style="margin-top:0"><button id="nh">Nouveau titre ou résultat</button></div></div><div id="hnform"></div><div class="card" id="hnlist"></div>' +
+    '<div class="card"><h2>Boutiques</h2><div class="row" style="margin-top:0"><button id="ns">Nouvelle fiche</button></div></div><div id="spform"></div><div class="card" id="splist"></div>' +
     '<div class="card"><h2>Textes du site</h2><form id="stf">' +
     '<label for="sthist">Historique de l’ASC (affiché dans « L’association »)</label><textarea id="sthist" rows="8" maxlength="8000"></textarea>' +
     '<label for="stcult">Présentation du volet culturel et théâtre</label><textarea id="stcult" rows="4" maxlength="2000"></textarea>' +
@@ -107,10 +109,16 @@ async function start(session){
   document.getElementById('pllist').addEventListener('click', onPlayerClick);
   document.getElementById('npt').onclick = function(){ openPartnerForm(null); };
   document.getElementById('ptlist').addEventListener('click', onPartnerClick);
+  document.getElementById('nh').onclick = function(){ openHonourForm(null); };
+  document.getElementById('ns').onclick = function(){ openShopForm(null); };
+  document.getElementById('splist').addEventListener('click', onShopClick);
+  document.getElementById('hnlist').addEventListener('click', onHonourClick);
   loadMatches();
   loadSettings();
   loadPlayers();
   loadPartners();
+  loadHonours();
+  loadShop();
   loadMessages();
 }
 async function logout(){ await sb.auth.signOut(); showLogin(); }
@@ -365,7 +373,7 @@ async function removePlayer(p){
 }
 
 // ---------- Partenaires et sponsors ----------
-var KIND = { contact:'Contact', partenariat:'Partenariat', adhesion:'Adhésion' };
+var KIND = { contact:'Contact', partenariat:'Partenariat', adhesion:'Adhésion', commande:'Commande' };
 var PARTNERS = [], editingPartner = null;
 async function loadPartners(){
   var r = await sb.from('partners').select('id,name,logo_url,website,message,sort_order,published').order('sort_order').order('name');
@@ -434,6 +442,160 @@ async function removePartner(p){
   var r = await sb.from('partners').delete().eq('id', p.id);
   if(r.error){ toast('Suppression impossible : ' + r.error.message, true); return; }
   toast('Partenaire supprimé.'); loadPartners();
+}
+
+// ---------- Palmarès ----------
+var HONOURS = [], editingHonour = null;
+var RESULTS = ['Champion','Vainqueur','Finaliste','Demi-finaliste','Quart de finaliste','Troisième place','Participation'];
+function missingTable(msg){ return /does not exist|schema cache/i.test(msg) ? 'La table n’existe pas encore : exécutez d’abord le fichier SQL « palmares-boutiques » dans Supabase.' : msg; }
+async function loadHonours(){
+  var r = await sb.from('honours').select('id,season,competition,result,notes,photo_url,published').order('season', { ascending:false });
+  if(r.error){ document.getElementById('hnlist').innerHTML = '<div class="empty">Impossible de charger le palmarès : ' + esc(missingTable(r.error.message)) + '</div>'; return; }
+  HONOURS = r.data; renderHonours();
+}
+function renderHonours(){
+  var el = document.getElementById('hnlist');
+  if(!HONOURS.length){ el.innerHTML = '<div class="empty">Aucun titre enregistré. Touchez « Nouveau titre ou résultat » pour ajouter le premier.</div>'; return; }
+  el.innerHTML = HONOURS.map(function(x){
+    var img = (x.photo_url && x.photo_url.indexOf('https://') === 0) ? '<img alt="" src="' + esc(x.photo_url) + '" style="width:52px;height:52px;border-radius:6px;object-fit:cover;float:left;margin-right:.8rem">' : '';
+    return '<div class="item" style="overflow:hidden">' + img + '<h3>' + esc(x.season) + ' · ' + esc(x.competition) + '</h3><span class="tag pub">' + esc(x.result) + '</span><span class="tag' + (x.published ? ' pub' : '') + '">' + (x.published ? 'Visible' : 'Masqué') + '</span>' +
+      '<div class="row" style="margin-top:.6rem"><button class="alt" data-act="hnedit" data-id="' + x.id + '">Modifier</button><button class="danger" data-act="hndel" data-id="' + x.id + '">Supprimer</button></div></div>';
+  }).join('');
+}
+function onHonourClick(e){
+  var b = e.target.closest('button[data-act]'); if(!b) return;
+  var x = HONOURS.find(function(y){ return y.id === b.dataset.id; }); if(!x) return;
+  if(b.dataset.act === 'hnedit') openHonourForm(x);
+  if(b.dataset.act === 'hndel') removeHonour(x);
+}
+function openHonourForm(x){
+  editingHonour = x;
+  var f = document.getElementById('hnform');
+  f.innerHTML = '<div class="card"><h2>' + (x ? 'Modifier le titre' : 'Nouveau titre ou résultat') + '</h2><form id="hnf">' +
+    '<label for="hnseason">Saison ou année (exemple : 2025 ou 2024-2025)</label><input id="hnseason" maxlength="20" required value="' + esc(x ? x.season : '') + '">' +
+    '<label for="hncomp">Compétition</label><input id="hncomp" list="comps2" maxlength="150" required value="' + esc(x ? x.competition : '') + '"><datalist id="comps2">' + COMPS.map(function(c){ return '<option value="' + esc(c) + '">'; }).join('') + '</datalist>' +
+    '<label for="hnres">Résultat obtenu</label><input id="hnres" list="res2" maxlength="100" required value="' + esc(x ? x.result : '') + '"><datalist id="res2">' + RESULTS.map(function(c){ return '<option value="' + esc(c) + '">'; }).join('') + '</datalist>' +
+    '<label for="hnnotes">Précisions (facultatif)</label><textarea id="hnnotes" rows="3" maxlength="1000">' + esc(x && x.notes ? x.notes : '') + '</textarea>' +
+    '<label for="hnfile">Photo (facultative, JPEG, PNG ou WebP, 10 Mo maximum)</label><input id="hnfile" type="file" accept="image/jpeg,image/png,image/webp">' +
+    (x && x.photo_url ? '<img class="cover" alt="Photo actuelle" src="' + esc(x.photo_url) + '" style="max-height:120px">' : '') +
+    '<label><input type="checkbox" id="hnpub"' + (!x || x.published ? ' checked' : '') + '>Visible sur le site</label>' +
+    '<div class="row"><button type="submit" id="hnsv">Enregistrer</button><button type="button" class="alt" id="hncn">Annuler</button></div></form></div>';
+  document.getElementById('hncn').onclick = function(){ f.innerHTML = ''; editingHonour = null; };
+  document.getElementById('hnf').addEventListener('submit', saveHonour);
+  f.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+async function saveHonour(e){
+  e.preventDefault();
+  var btn = document.getElementById('hnsv');
+  var season = document.getElementById('hnseason').value.trim(), comp = document.getElementById('hncomp').value.trim(), res = document.getElementById('hnres').value.trim();
+  if(season.length < 2 || comp.length < 2 || res.length < 2){ toast('Renseignez la saison, la compétition et le résultat.', true); return; }
+  btn.disabled = true;
+  var payload = { season: season, competition: comp, result: res, notes: document.getElementById('hnnotes').value.trim() || null, published: document.getElementById('hnpub').checked };
+  var file = document.getElementById('hnfile').files[0];
+  if(file){
+    if(!TYPES[file.type]){ toast('Format d’image non accepté. Utilisez JPEG, PNG ou WebP.', true); btn.disabled = false; return; }
+    if(file.size > 10485760){ toast('L’image dépasse 10 Mo.', true); btn.disabled = false; return; }
+    var path = 'honours/' + Date.now() + '-' + slugify(comp) + '.' + TYPES[file.type];
+    var up = await sb.storage.from('media').upload(path, file, { contentType: file.type });
+    if(up.error){ toast('Échec de l’envoi de la photo : ' + up.error.message, true); btn.disabled = false; return; }
+    payload.photo_url = sb.storage.from('media').getPublicUrl(path).data.publicUrl;
+  }
+  var r = editingHonour ? await sb.from('honours').update(payload).eq('id', editingHonour.id) : await sb.from('honours').insert(payload);
+  btn.disabled = false;
+  if(r.error){ toast('Enregistrement impossible : ' + missingTable(r.error.message), true); return; }
+  document.getElementById('hnform').innerHTML = ''; editingHonour = null;
+  toast('Palmarès enregistré.'); loadHonours();
+}
+async function removeHonour(x){
+  if(!window.confirm('Supprimer cette ligne du palmarès (' + x.season + ', ' + x.competition + ') ? Cette action est définitive.')) return;
+  var r = await sb.from('honours').delete().eq('id', x.id);
+  if(r.error){ toast('Suppression impossible : ' + r.error.message, true); return; }
+  toast('Ligne supprimée.'); loadHonours();
+}
+
+// ---------- Boutiques ----------
+var SHOP = [], editingShop = null;
+var SKIND = { article:'Article de l’ASC', commerce:'Commerce du quartier' };
+async function loadShop(){
+  var r = await sb.from('shop_entries').select('id,kind,name,description,price_fcfa,address,phone,photo_url,available,published,sort_order').order('kind').order('sort_order').order('name');
+  if(r.error){ document.getElementById('splist').innerHTML = '<div class="empty">Impossible de charger les boutiques : ' + esc(missingTable(r.error.message)) + '</div>'; return; }
+  SHOP = r.data; renderShop();
+}
+function renderShop(){
+  var el = document.getElementById('splist');
+  if(!SHOP.length){ el.innerHTML = '<div class="empty">Aucune fiche enregistrée. Touchez « Nouvelle fiche » pour ajouter un article de l’ASC ou un commerce du quartier.</div>'; return; }
+  el.innerHTML = SHOP.map(function(s){
+    var img = (s.photo_url && s.photo_url.indexOf('https://') === 0) ? '<img alt="" src="' + esc(s.photo_url) + '" style="width:52px;height:52px;border-radius:6px;object-fit:cover;float:left;margin-right:.8rem">' : '';
+    var extra = s.kind === 'article' ? ((s.price_fcfa != null ? '<span class="tag">' + s.price_fcfa.toLocaleString('fr-FR') + ' FCFA</span>' : '') + '<span class="tag' + (s.available ? ' pub' : '') + '">' + (s.available ? 'Disponible' : 'Indisponible') + '</span>') : '';
+    return '<div class="item" style="overflow:hidden">' + img + '<h3>' + esc(s.name) + '</h3><span class="tag">' + esc(SKIND[s.kind] || s.kind) + '</span>' + extra +
+      '<span class="tag' + (s.published ? ' pub' : '') + '">' + (s.published ? 'Visible' : 'Masqué') + '</span>' +
+      '<div class="row" style="margin-top:.6rem"><button class="alt" data-act="spedit" data-id="' + s.id + '">Modifier</button><button class="danger" data-act="spdel" data-id="' + s.id + '">Supprimer</button></div></div>';
+  }).join('');
+}
+function onShopClick(e){
+  var b = e.target.closest('button[data-act]'); if(!b) return;
+  var s = SHOP.find(function(y){ return y.id === b.dataset.id; }); if(!s) return;
+  if(b.dataset.act === 'spedit') openShopForm(s);
+  if(b.dataset.act === 'spdel') removeShop(s);
+}
+function openShopForm(s){
+  editingShop = s;
+  var f = document.getElementById('spform');
+  f.innerHTML = '<div class="card"><h2>' + (s ? 'Modifier la fiche' : 'Nouvelle fiche') + '</h2><form id="spf">' +
+    '<label for="spkind">Type de fiche</label><select id="spkind"><option value="article"' + (!s || s.kind === 'article' ? ' selected' : '') + '>Article de l’ASC à vendre</option><option value="commerce"' + (s && s.kind === 'commerce' ? ' selected' : '') + '>Commerce du quartier</option></select>' +
+    '<label for="spname">Nom</label><input id="spname" maxlength="150" required value="' + esc(s ? s.name : '') + '">' +
+    '<label for="spdesc">Description (800 caractères au maximum)</label><textarea id="spdesc" rows="3" maxlength="800">' + esc(s && s.description ? s.description : '') + '</textarea>' +
+    '<div id="spart"><label for="spprice">Prix en FCFA (facultatif)</label><input id="spprice" type="number" min="0" max="10000000" inputmode="numeric" value="' + (s && s.price_fcfa != null ? s.price_fcfa : '') + '">' +
+    '<label><input type="checkbox" id="spavail"' + (!s || s.available ? ' checked' : '') + '>Disponible</label></div>' +
+    '<div id="spcom"><label for="spaddr">Adresse ou quartier (facultatif)</label><input id="spaddr" maxlength="200" value="' + esc(s && s.address ? s.address : '') + '">' +
+    '<label for="spphone">Téléphone (facultatif)</label><input id="spphone" type="tel" maxlength="30" value="' + esc(s && s.phone ? s.phone : '') + '">' +
+    '<p class="muted" style="margin:.4rem 0 0;font-size:.9rem">Obtenez l’accord du commerçant avant de publier son adresse et son téléphone.</p></div>' +
+    '<label for="spord">Ordre d’affichage (facultatif)</label><input id="spord" type="number" min="0" max="999" inputmode="numeric" value="' + (s && s.sort_order ? s.sort_order : '') + '">' +
+    '<label for="spfile">Photo (facultative, JPEG, PNG ou WebP, 10 Mo maximum)</label><input id="spfile" type="file" accept="image/jpeg,image/png,image/webp">' +
+    (s && s.photo_url ? '<img class="cover" alt="Photo actuelle" src="' + esc(s.photo_url) + '" style="max-height:120px">' : '') +
+    '<label><input type="checkbox" id="sppub"' + (!s || s.published ? ' checked' : '') + '>Visible sur le site</label>' +
+    '<div class="row"><button type="submit" id="spsv">Enregistrer</button><button type="button" class="alt" id="spcn">Annuler</button></div></form></div>';
+  function applyKind(){ var art = document.getElementById('spkind').value === 'article'; document.getElementById('spart').style.display = art ? '' : 'none'; document.getElementById('spcom').style.display = art ? 'none' : ''; }
+  document.getElementById('spkind').addEventListener('change', applyKind); applyKind();
+  document.getElementById('spcn').onclick = function(){ f.innerHTML = ''; editingShop = null; };
+  document.getElementById('spf').addEventListener('submit', saveShop);
+  f.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+async function saveShop(e){
+  e.preventDefault();
+  var btn = document.getElementById('spsv');
+  var kind = document.getElementById('spkind').value, name = document.getElementById('spname').value.trim();
+  var price = document.getElementById('spprice').value.trim(), phone = document.getElementById('spphone').value.trim(), ord = document.getElementById('spord').value.trim();
+  if(name.length < 2){ toast('Indiquez le nom.', true); return; }
+  var np = (kind === 'article' && price !== '') ? parseInt(price, 10) : null;
+  if(np !== null && (isNaN(np) || np < 0 || np > 10000000)){ toast('Le prix doit être un nombre positif.', true); return; }
+  if(kind === 'commerce' && phone && !/^[0-9+ ().-]{6,30}$/.test(phone)){ toast('Le téléphone ne doit contenir que des chiffres, des espaces et le signe +.', true); return; }
+  var no = ord === '' ? 0 : parseInt(ord, 10);
+  if(isNaN(no) || no < 0 || no > 999){ toast('L’ordre doit être un nombre entre 0 et 999.', true); return; }
+  btn.disabled = true;
+  var payload = { kind: kind, name: name, description: document.getElementById('spdesc').value.trim() || null, price_fcfa: np,
+    address: kind === 'commerce' ? (document.getElementById('spaddr').value.trim() || null) : null, phone: kind === 'commerce' ? (phone || null) : null,
+    available: kind === 'article' ? document.getElementById('spavail').checked : true, published: document.getElementById('sppub').checked, sort_order: no };
+  var file = document.getElementById('spfile').files[0];
+  if(file){
+    if(!TYPES[file.type]){ toast('Format d’image non accepté. Utilisez JPEG, PNG ou WebP.', true); btn.disabled = false; return; }
+    if(file.size > 10485760){ toast('L’image dépasse 10 Mo.', true); btn.disabled = false; return; }
+    var path = 'shop/' + Date.now() + '-' + slugify(name) + '.' + TYPES[file.type];
+    var up = await sb.storage.from('media').upload(path, file, { contentType: file.type });
+    if(up.error){ toast('Échec de l’envoi de la photo : ' + up.error.message, true); btn.disabled = false; return; }
+    payload.photo_url = sb.storage.from('media').getPublicUrl(path).data.publicUrl;
+  }
+  var r = editingShop ? await sb.from('shop_entries').update(payload).eq('id', editingShop.id) : await sb.from('shop_entries').insert(payload);
+  btn.disabled = false;
+  if(r.error){ toast('Enregistrement impossible : ' + missingTable(r.error.message), true); return; }
+  document.getElementById('spform').innerHTML = ''; editingShop = null;
+  toast('Fiche enregistrée.'); loadShop();
+}
+async function removeShop(s){
+  if(!window.confirm('Supprimer la fiche « ' + s.name + ' » ? Cette action est définitive.')) return;
+  var r = await sb.from('shop_entries').delete().eq('id', s.id);
+  if(r.error){ toast('Suppression impossible : ' + r.error.message, true); return; }
+  toast('Fiche supprimée.'); loadShop();
 }
 
 // ---------- Textes du site ----------
