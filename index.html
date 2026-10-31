@@ -88,6 +88,7 @@ async function start(session){
     '<main><div id="msg" role="status"></div><div class="card"><h2>Actualités</h2><div class="row" style="margin-top:0"><button id="nw">Nouvelle actualité</button></div></div>' +
     '<div id="form"></div><div class="card" id="list"></div>' +
     '<div class="card"><h2>Matchs</h2><div class="row" style="margin-top:0"><button id="nm">Nouveau match</button></div></div><div id="mform"></div><div class="card" id="matchlist"></div>' +
+    '<div class="card"><h2>Joueurs et encadrement</h2><div class="row" style="margin-top:0"><button id="np">Nouveau joueur</button></div></div><div id="pform"></div><div class="card" id="pllist"></div>' +
     '<div class="card"><h2>Textes du site</h2><form id="stf">' +
     '<label for="sthist">Historique de l’ASC (affiché dans « L’association »)</label><textarea id="sthist" rows="8" maxlength="8000"></textarea>' +
     '<label for="stcult">Présentation du volet culturel et théâtre</label><textarea id="stcult" rows="4" maxlength="2000"></textarea>' +
@@ -101,8 +102,11 @@ async function start(session){
   document.getElementById('matchlist').addEventListener('click', onMatchClick);
   loadNews();
   document.getElementById('stf').addEventListener('submit', saveSettings);
+  document.getElementById('np').onclick = function(){ openPlayerForm(null); };
+  document.getElementById('pllist').addEventListener('click', onPlayerClick);
   loadMatches();
   loadSettings();
+  loadPlayers();
   loadMessages();
 }
 async function logout(){ await sb.auth.signOut(); showLogin(); }
@@ -276,6 +280,84 @@ async function onMatchClick(e){
     if(d.error){ toast('Suppression impossible : ' + d.error.message, true); return; }
     toast('Match supprimé.'); loadMatches();
   }
+}
+
+// ---------- Joueurs et encadrement ----------
+var PLAYERS = [], editingPlayer = null;
+var POS = { gardien:'Gardien', defenseur:'Défenseur', milieu:'Milieu', attaquant:'Attaquant', entraineur:'Entraîneur', encadreur:'Encadrement' };
+var POSORDER = ['gardien','defenseur','milieu','attaquant','entraineur','encadreur'];
+async function loadPlayers(){
+  var r = await sb.from('players').select('id,full_name,position,shirt_number,photo_url,active');
+  if(r.error){ document.getElementById('pllist').innerHTML = '<div class="empty">Impossible de charger les joueurs : ' + esc(r.error.message) + '</div>'; return; }
+  PLAYERS = r.data.sort(function(a,b){
+    var d = POSORDER.indexOf(a.position) - POSORDER.indexOf(b.position); if(d) return d;
+    var n = (a.shirt_number || 999) - (b.shirt_number || 999); if(n) return n;
+    return a.full_name.localeCompare(b.full_name);
+  });
+  renderPlayers();
+}
+function renderPlayers(){
+  var el = document.getElementById('pllist');
+  if(!PLAYERS.length){ el.innerHTML = '<div class="empty">Aucun joueur enregistré. Touchez « Nouveau joueur » pour ajouter le premier.</div>'; return; }
+  el.innerHTML = PLAYERS.map(function(p){
+    var img = (p.photo_url && p.photo_url.indexOf('https://') === 0) ? '<img alt="" src="' + esc(p.photo_url) + '" style="width:52px;height:52px;border-radius:50%;object-fit:cover;float:left;margin-right:.8rem">' : '';
+    return '<div class="item" style="overflow:hidden">' + img + '<h3>' + esc(p.full_name) + '</h3><span class="tag">' + esc(POS[p.position] || 'Poste non précisé') + '</span>' +
+      (p.shirt_number ? '<span class="tag">n° ' + p.shirt_number + '</span>' : '') + '<span class="tag' + (p.active ? ' pub' : '') + '">' + (p.active ? 'Visible' : 'Masqué') + '</span>' +
+      '<div class="row" style="margin-top:.6rem"><button class="alt" data-act="pedit" data-id="' + p.id + '">Modifier</button><button class="danger" data-act="pdel" data-id="' + p.id + '">Supprimer</button></div></div>';
+  }).join('');
+}
+function onPlayerClick(e){
+  var b = e.target.closest('button[data-act]'); if(!b) return;
+  var p = PLAYERS.find(function(x){ return x.id === b.dataset.id; }); if(!p) return;
+  if(b.dataset.act === 'pedit') openPlayerForm(p);
+  if(b.dataset.act === 'pdel') removePlayer(p);
+}
+function openPlayerForm(p){
+  editingPlayer = p;
+  var opts = '<option value="">Poste non précisé</option>' + POSORDER.map(function(k){ return '<option value="' + k + '"' + (p && p.position === k ? ' selected' : '') + '>' + POS[k] + '</option>'; }).join('');
+  var f = document.getElementById('pform');
+  f.innerHTML = '<div class="card"><h2>' + (p ? 'Modifier la fiche' : 'Nouveau joueur ou membre de l’encadrement') + '</h2><form id="pf">' +
+    '<label for="pname">Nom complet</label><input id="pname" maxlength="120" required value="' + esc(p ? p.full_name : '') + '">' +
+    '<label for="ppos">Poste</label><select id="ppos">' + opts + '</select>' +
+    '<label for="pnum">Numéro de maillot (facultatif)</label><input id="pnum" type="number" min="1" max="99" inputmode="numeric" value="' + (p && p.shirt_number ? p.shirt_number : '') + '">' +
+    '<label for="pfile">Photo (JPEG, PNG ou WebP, 10 Mo maximum)</label><input id="pfile" type="file" accept="image/jpeg,image/png,image/webp">' +
+    '<p class="muted" style="margin:.4rem 0 0;font-size:.9rem">Pour un joueur mineur, obtenez l’accord de ses parents avant de publier sa photo et son nom.</p>' +
+    (p && p.photo_url ? '<img class="cover" alt="Photo actuelle" src="' + esc(p.photo_url) + '" style="max-height:120px">' : '') +
+    '<label><input type="checkbox" id="ppub"' + (!p || p.active ? ' checked' : '') + '>Visible sur le site</label>' +
+    '<div class="row"><button type="submit" id="psv">Enregistrer</button><button type="button" class="alt" id="pcn">Annuler</button></div></form></div>';
+  document.getElementById('pcn').onclick = function(){ f.innerHTML = ''; editingPlayer = null; };
+  document.getElementById('pf').addEventListener('submit', savePlayer);
+  f.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+async function savePlayer(e){
+  e.preventDefault();
+  var btn = document.getElementById('psv');
+  var name = document.getElementById('pname').value.trim(), num = document.getElementById('pnum').value.trim();
+  if(name.length < 2){ toast('Indiquez le nom du joueur (2 caractères au minimum).', true); return; }
+  var n = num === '' ? null : parseInt(num, 10);
+  if(n !== null && (isNaN(n) || n < 1 || n > 99)){ toast('Le numéro doit être compris entre 1 et 99.', true); return; }
+  btn.disabled = true;
+  var payload = { full_name: name, position: document.getElementById('ppos').value || null, shirt_number: n, active: document.getElementById('ppub').checked };
+  var file = document.getElementById('pfile').files[0];
+  if(file){
+    if(!TYPES[file.type]){ toast('Format d’image non accepté. Utilisez JPEG, PNG ou WebP.', true); btn.disabled = false; return; }
+    if(file.size > 10485760){ toast('L’image dépasse 10 Mo.', true); btn.disabled = false; return; }
+    var path = 'players/' + Date.now() + '-' + slugify(name) + '.' + TYPES[file.type];
+    var up = await sb.storage.from('media').upload(path, file, { contentType: file.type });
+    if(up.error){ toast('Échec de l’envoi de la photo : ' + up.error.message, true); btn.disabled = false; return; }
+    payload.photo_url = sb.storage.from('media').getPublicUrl(path).data.publicUrl;
+  }
+  var r = editingPlayer ? await sb.from('players').update(payload).eq('id', editingPlayer.id) : await sb.from('players').insert(payload);
+  btn.disabled = false;
+  if(r.error){ toast('Enregistrement impossible : ' + r.error.message, true); return; }
+  document.getElementById('pform').innerHTML = ''; editingPlayer = null;
+  toast('Fiche enregistrée.'); loadPlayers();
+}
+async function removePlayer(p){
+  if(!window.confirm('Supprimer la fiche de ' + p.full_name + ' ? Cette action est définitive.')) return;
+  var r = await sb.from('players').delete().eq('id', p.id);
+  if(r.error){ toast('Suppression impossible : ' + r.error.message, true); return; }
+  toast('Fiche supprimée.'); loadPlayers();
 }
 
 // ---------- Textes du site ----------
