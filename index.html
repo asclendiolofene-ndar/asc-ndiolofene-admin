@@ -89,6 +89,7 @@ async function start(session){
     '<div id="form"></div><div class="card" id="list"></div>' +
     '<div class="card"><h2>Matchs</h2><div class="row" style="margin-top:0"><button id="nm">Nouveau match</button></div></div><div id="mform"></div><div class="card" id="matchlist"></div>' +
     '<div class="card"><h2>Joueurs et encadrement</h2><div class="row" style="margin-top:0"><button id="np">Nouveau joueur</button></div></div><div id="pform"></div><div class="card" id="pllist"></div>' +
+    '<div class="card"><h2>Partenaires et sponsors</h2><div class="row" style="margin-top:0"><button id="npt">Nouveau partenaire</button></div></div><div id="ptform"></div><div class="card" id="ptlist"></div>' +
     '<div class="card"><h2>Textes du site</h2><form id="stf">' +
     '<label for="sthist">Historique de l’ASC (affiché dans « L’association »)</label><textarea id="sthist" rows="8" maxlength="8000"></textarea>' +
     '<label for="stcult">Présentation du volet culturel et théâtre</label><textarea id="stcult" rows="4" maxlength="2000"></textarea>' +
@@ -104,9 +105,12 @@ async function start(session){
   document.getElementById('stf').addEventListener('submit', saveSettings);
   document.getElementById('np').onclick = function(){ openPlayerForm(null); };
   document.getElementById('pllist').addEventListener('click', onPlayerClick);
+  document.getElementById('npt').onclick = function(){ openPartnerForm(null); };
+  document.getElementById('ptlist').addEventListener('click', onPartnerClick);
   loadMatches();
   loadSettings();
   loadPlayers();
+  loadPartners();
   loadMessages();
 }
 async function logout(){ await sb.auth.signOut(); showLogin(); }
@@ -360,6 +364,78 @@ async function removePlayer(p){
   toast('Fiche supprimée.'); loadPlayers();
 }
 
+// ---------- Partenaires et sponsors ----------
+var KIND = { contact:'Contact', partenariat:'Partenariat', adhesion:'Adhésion' };
+var PARTNERS = [], editingPartner = null;
+async function loadPartners(){
+  var r = await sb.from('partners').select('id,name,logo_url,website,message,sort_order,published').order('sort_order').order('name');
+  if(r.error){ document.getElementById('ptlist').innerHTML = '<div class="empty">Impossible de charger les partenaires : ' + esc(r.error.message) + '</div>'; return; }
+  PARTNERS = r.data; renderPartners();
+}
+function renderPartners(){
+  var el = document.getElementById('ptlist');
+  if(!PARTNERS.length){ el.innerHTML = '<div class="empty">Aucun partenaire enregistré. Touchez « Nouveau partenaire » pour ajouter le premier.</div>'; return; }
+  el.innerHTML = PARTNERS.map(function(p){
+    var img = (p.logo_url && p.logo_url.indexOf('https://') === 0) ? '<img alt="" src="' + esc(p.logo_url) + '" style="width:52px;height:52px;object-fit:contain;float:left;margin-right:.8rem;background:#fff;border:1px solid var(--line);border-radius:6px">' : '';
+    return '<div class="item" style="overflow:hidden">' + img + '<h3>' + esc(p.name) + '</h3><span class="tag' + (p.published ? ' pub' : '') + '">' + (p.published ? 'Visible' : 'Masqué') + '</span>' +
+      (p.website ? '<span class="muted">' + esc(p.website) + '</span>' : '') +
+      '<div class="row" style="margin-top:.6rem"><button class="alt" data-act="ptedit" data-id="' + p.id + '">Modifier</button><button class="danger" data-act="ptdel" data-id="' + p.id + '">Supprimer</button></div></div>';
+  }).join('');
+}
+function onPartnerClick(e){
+  var b = e.target.closest('button[data-act]'); if(!b) return;
+  var p = PARTNERS.find(function(x){ return x.id === b.dataset.id; }); if(!p) return;
+  if(b.dataset.act === 'ptedit') openPartnerForm(p);
+  if(b.dataset.act === 'ptdel') removePartner(p);
+}
+function openPartnerForm(p){
+  editingPartner = p;
+  var f = document.getElementById('ptform');
+  f.innerHTML = '<div class="card"><h2>' + (p ? 'Modifier le partenaire' : 'Nouveau partenaire ou sponsor') + '</h2><form id="ptf">' +
+    '<label for="ptname">Nom</label><input id="ptname" maxlength="120" required value="' + esc(p ? p.name : '') + '">' +
+    '<label for="ptweb">Site web (facultatif, commence par https://)</label><input id="ptweb" type="url" maxlength="200" value="' + esc(p && p.website ? p.website : '') + '">' +
+    '<label for="ptmsg">Message de remerciement (facultatif)</label><textarea id="ptmsg" rows="3" maxlength="500">' + esc(p && p.message ? p.message : '') + '</textarea>' +
+    '<label for="ptord">Ordre d’affichage (1 en premier, facultatif)</label><input id="ptord" type="number" min="0" max="999" inputmode="numeric" value="' + (p && p.sort_order ? p.sort_order : '') + '">' +
+    '<label for="ptfile">Logo (JPEG, PNG ou WebP, 10 Mo maximum)</label><input id="ptfile" type="file" accept="image/jpeg,image/png,image/webp">' +
+    (p && p.logo_url ? '<img class="cover" alt="Logo actuel" src="' + esc(p.logo_url) + '" style="max-height:90px">' : '') +
+    '<label><input type="checkbox" id="ptpub"' + (!p || p.published ? ' checked' : '') + '>Visible sur le site</label>' +
+    '<div class="row"><button type="submit" id="ptsv">Enregistrer</button><button type="button" class="alt" id="ptcn">Annuler</button></div></form></div>';
+  document.getElementById('ptcn').onclick = function(){ f.innerHTML = ''; editingPartner = null; };
+  document.getElementById('ptf').addEventListener('submit', savePartner);
+  f.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+async function savePartner(e){
+  e.preventDefault();
+  var btn = document.getElementById('ptsv');
+  var name = document.getElementById('ptname').value.trim(), web = document.getElementById('ptweb').value.trim(), ord = document.getElementById('ptord').value.trim();
+  if(name.length < 2){ toast('Indiquez le nom du partenaire.', true); return; }
+  if(web && !/^https?:\/\/[^\s]+\.[^\s]+$/.test(web)){ toast('L’adresse du site doit commencer par https://', true); return; }
+  var n = ord === '' ? 0 : parseInt(ord, 10);
+  if(isNaN(n) || n < 0 || n > 999){ toast('L’ordre doit être un nombre entre 0 et 999.', true); return; }
+  btn.disabled = true;
+  var payload = { name: name, website: web || null, message: document.getElementById('ptmsg').value.trim() || null, sort_order: n, published: document.getElementById('ptpub').checked };
+  var file = document.getElementById('ptfile').files[0];
+  if(file){
+    if(!TYPES[file.type]){ toast('Format d’image non accepté. Utilisez JPEG, PNG ou WebP.', true); btn.disabled = false; return; }
+    if(file.size > 10485760){ toast('L’image dépasse 10 Mo.', true); btn.disabled = false; return; }
+    var path = 'partners/' + Date.now() + '-' + slugify(name) + '.' + TYPES[file.type];
+    var up = await sb.storage.from('media').upload(path, file, { contentType: file.type });
+    if(up.error){ toast('Échec de l’envoi du logo : ' + up.error.message, true); btn.disabled = false; return; }
+    payload.logo_url = sb.storage.from('media').getPublicUrl(path).data.publicUrl;
+  }
+  var r = editingPartner ? await sb.from('partners').update(payload).eq('id', editingPartner.id) : await sb.from('partners').insert(payload);
+  btn.disabled = false;
+  if(r.error){ toast('Enregistrement impossible : ' + r.error.message, true); return; }
+  document.getElementById('ptform').innerHTML = ''; editingPartner = null;
+  toast('Partenaire enregistré.'); loadPartners();
+}
+async function removePartner(p){
+  if(!window.confirm('Supprimer ' + p.name + ' ? Cette action est définitive.')) return;
+  var r = await sb.from('partners').delete().eq('id', p.id);
+  if(r.error){ toast('Suppression impossible : ' + r.error.message, true); return; }
+  toast('Partenaire supprimé.'); loadPartners();
+}
+
 // ---------- Textes du site ----------
 async function loadSettings(){
   var r = await sb.from('site_settings').select('key,value').in('key', ['historique','culture_intro']);
@@ -395,7 +471,7 @@ function renderMessages(){
   el.innerHTML = MSGS.map(function(m){
     var d = new Date(m.created_at).toLocaleString('fr-FR', { dateStyle:'long', timeStyle:'short' });
     var mail = (m.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m.email)) ? ' · <a href="mailto:' + esc(m.email) + '">' + esc(m.email) + '</a>' : '';
-    return '<div class="item"><h3>' + esc(m.name) + '</h3><span class="tag' + (m.handled ? '' : ' pub') + '">' + (m.handled ? 'Traité' : 'Nouveau') + '</span><span class="muted">' + esc(d) + mail + '</span>' +
+    return '<div class="item"><h3>' + esc(m.name) + '</h3><span class="tag">' + esc(KIND[m.kind] || m.kind) + '</span><span class="tag' + (m.handled ? '' : ' pub') + '">' + (m.handled ? 'Traité' : 'Nouveau') + '</span><span class="muted">' + esc(d) + mail + '</span>' +
       '<p style="white-space:pre-line;margin:.5rem 0 0">' + esc(m.body) + '</p>' +
       '<div class="row" style="margin-top:.6rem"><button class="alt" data-act="handled" data-id="' + m.id + '">' + (m.handled ? 'Marquer comme nouveau' : 'Marquer comme traité') + '</button>' +
       (isAdmin ? '<button class="danger" data-act="delmsg" data-id="' + m.id + '">Supprimer</button>' : '') + '</div></div>';
