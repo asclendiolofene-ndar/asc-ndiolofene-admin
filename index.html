@@ -95,6 +95,12 @@ async function start(session){
     '<div class="card"><h2>Textes du site</h2><form id="stf">' +
     '<label for="sthist">Historique de l’ASC (affiché dans « L’association »)</label><textarea id="sthist" rows="8" maxlength="8000"></textarea>' +
     '<label for="stcult">Présentation du volet culturel et théâtre</label><textarea id="stcult" rows="4" maxlength="2000"></textarea>' +
+    '<h3 style="margin:1.4rem 0 .2rem">Pages officielles et contact</h3><p class="muted" style="margin:0">Laissez un champ vide pour ne pas afficher le réseau correspondant.</p>' +
+    '<label for="sfb">Page Facebook (adresse complète commençant par https://)</label><input id="sfb" type="url" maxlength="200">' +
+    '<label for="sig">Compte Instagram (adresse complète)</label><input id="sig" type="url" maxlength="200">' +
+    '<label for="stt">Compte TikTok (adresse complète)</label><input id="stt" type="url" maxlength="200">' +
+    '<label for="syt">Chaîne YouTube (adresse complète)</label><input id="syt" type="url" maxlength="200">' +
+    '<label for="swa">WhatsApp : adresse de la chaîne (https://…) ou numéro avec l’indicatif du pays, sans espace</label><input id="swa" type="text" maxlength="200">' +
     '<div class="row"><button type="submit" id="stsv">Enregistrer les textes</button></div></form></div>' +
     '<div class="card"><h2>Messages reçus</h2><div id="mlist"></div></div></main>';
   document.getElementById('lo').onclick = logout;
@@ -599,23 +605,32 @@ async function removeShop(s){
 }
 
 // ---------- Textes du site ----------
+var SETKEYS = ['historique','culture_intro','facebook','instagram','tiktok','youtube','whatsapp'];
+var SETFIELDS = { historique:'sthist', culture_intro:'stcult', facebook:'sfb', instagram:'sig', tiktok:'stt', youtube:'syt', whatsapp:'swa' };
 async function loadSettings(){
-  var r = await sb.from('site_settings').select('key,value').in('key', ['historique','culture_intro']);
+  var r = await sb.from('site_settings').select('key,value').in('key', SETKEYS);
   if(r.error){ toast('Impossible de charger les textes : ' + r.error.message, true); return; }
-  r.data.forEach(function(s){
-    if(s.key === 'historique') document.getElementById('sthist').value = s.value;
-    if(s.key === 'culture_intro') document.getElementById('stcult').value = s.value;
-  });
+  r.data.forEach(function(s){ var el = document.getElementById(SETFIELDS[s.key]); if(el) el.value = s.value; });
 }
 async function saveSettings(e){
   e.preventDefault();
+  var urlRe = /^https:\/\/[^\s]+\.[^\s]+$/;
+  var vals = {};
+  Object.keys(SETFIELDS).forEach(function(k){ vals[k] = document.getElementById(SETFIELDS[k]).value.trim(); });
+  var names = { facebook:'Facebook', instagram:'Instagram', tiktok:'TikTok', youtube:'YouTube' };
+  for(var k in names){ if(vals[k] && !urlRe.test(vals[k])){ toast('L’adresse ' + names[k] + ' doit commencer par https://', true); return; } }
+  var wa = vals.whatsapp;
+  if(wa && !urlRe.test(wa)){
+    wa = wa.replace(/[\s+().-]/g, '');
+    if(!/^[0-9]{8,15}$/.test(wa)){ toast('WhatsApp : saisissez l’adresse de la chaîne (https://…) ou un numéro de 8 à 15 chiffres avec l’indicatif du pays.', true); return; }
+  }
+  vals.whatsapp = wa;
   var btn = document.getElementById('stsv'); btn.disabled = true;
-  var r = await sb.from('site_settings').upsert([
-    { key:'historique', value: document.getElementById('sthist').value.trim() },
-    { key:'culture_intro', value: document.getElementById('stcult').value.trim() }
-  ], { onConflict:'key' });
+  var rows = SETKEYS.map(function(k){ return { key:k, value:vals[k] }; });
+  var r = await sb.from('site_settings').upsert(rows, { onConflict:'key' });
   btn.disabled = false;
   if(r.error){ toast('Enregistrement impossible : ' + r.error.message, true); return; }
+  document.getElementById('swa').value = wa;
   toast('Textes enregistrés.');
 }
 
